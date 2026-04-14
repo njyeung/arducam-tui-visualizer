@@ -1,16 +1,3 @@
-"""
-TUI depth rendering API.
-
-Usage:
-    from arducam_tui import LiveViewer
-
-    viewer = LiveViewer(width=240, height=180)
-    with viewer:
-        while running:
-            frame = cam.get_frame()
-            viewer.draw(frame)
-"""
-
 import sys
 import os
 import time
@@ -24,7 +11,6 @@ HIDE_CURSOR = f"{CSI}?25l"
 SHOW_CURSOR = f"{CSI}?25h"
 RESET = f"{CSI}0m"
 REVERSE = f"{CSI}7m"
-
 
 def _build_heat_lut():
     lut = np.zeros((256, 3), dtype=np.uint8)
@@ -61,14 +47,6 @@ GRAY_LUT = _build_gray_lut()
 
 
 class LiveViewer:
-    """
-    TUI depth frame renderer.
-
-    Args:
-        width:     Frame width in pixels.
-        height:    Frame height in pixels.
-        max_depth: Maximum depth value for colormap normalization.
-    """
 
     def __init__(self, width, height, max_depth=4096):
         self.width = width
@@ -86,9 +64,7 @@ class LiveViewer:
         self._x_idx = None
         self._out_w = 0
         self._out_h = 0
-
-    # ---- lifecycle (context manager) ----
-
+    
     def open(self):
         """Enter TUI mode: hidden cursor, cleared screen."""
         sys.stdout.write(HIDE_CURSOR + CLEAR_SCREEN)
@@ -107,9 +83,7 @@ class LiveViewer:
     def __exit__(self, *exc):
         self.close()
         return False
-
-    # ---- rendering ----
-
+    
     def _update_downsample_indices(self, cols, rows):
         if cols == self._prev_cols and rows == self._prev_rows:
             return
@@ -178,16 +152,7 @@ class LiveViewer:
 
         return "\n".join(buf)
 
-    # ---- public API ----
-
     def draw(self, frame):
-        """
-        Render a depth frame to the terminal.
-
-        Args:
-            frame: 2D numpy array (height x width) of depth values.
-                   Zero means invalid/no-data.
-        """
         self._frame_count += 1
         now = time.monotonic()
         elapsed = now - self._fps_t0
