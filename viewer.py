@@ -1,6 +1,8 @@
 import sys
 import os
 import time
+import ctypes
+from pathlib import Path
 import numpy as np
 
 # ANSI escape helpers
@@ -11,6 +13,26 @@ HIDE_CURSOR = f"{CSI}?25l"
 SHOW_CURSOR = f"{CSI}?25h"
 RESET = f"{CSI}0m"
 REVERSE = f"{CSI}7m"
+
+# Load C renderer
+_LIB_DIR = Path(__file__).parent
+_so_path = _LIB_DIR / "_render.so"
+if not _so_path.exists():
+    raise RuntimeError(
+        f"C renderer not built. Run:\n"
+        f"  gcc -O2 -shared -fPIC -o {_so_path} {_LIB_DIR / '_render.c'}"
+    )
+_lib = ctypes.CDLL(str(_so_path))
+_lib.render_halfblock.argtypes = [
+    ctypes.POINTER(ctypes.c_uint8),  # top
+    ctypes.POINTER(ctypes.c_uint8),  # bot
+    ctypes.c_int,                    # n_rows
+    ctypes.c_int,                    # width
+    ctypes.c_int,                    # pad
+    ctypes.c_char_p,                 # out
+]
+_lib.render_halfblock.restype = ctypes.c_int
+
 
 def _build_heat_lut():
     lut = np.zeros((256, 3), dtype=np.uint8)
@@ -64,7 +86,9 @@ class LiveViewer:
         self._x_idx = None
         self._out_w = 0
         self._out_h = 0
-    
+        # Reusable output buffer (512 KB)
+        self._buf = ctypes.create_string_buffer(512 * 1024)
+
     def open(self):
         """Enter TUI mode: hidden cursor, cleared screen."""
         sys.stdout.write(HIDE_CURSOR + CLEAR_SCREEN)
@@ -83,7 +107,7 @@ class LiveViewer:
     def __exit__(self, *exc):
         self.close()
         return False
-    
+
     def _update_downsample_indices(self, cols, rows):
         if cols == self._prev_cols and rows == self._prev_rows:
             return
@@ -120,39 +144,43 @@ class LiveViewer:
     def _render_frame(self, frame):
         cols, rows = os.get_terminal_size()
         self._update_downsample_indices(cols, rows)
-        ow, oh = self._out_w, self._out_h
+        ow = self._out_w
 
         rgb = self._depth_to_rgb(frame)
         small = rgb[np.ix_(self._y_idx, self._x_idx)]
 
+        top = np.ascontiguousarray(small[0::2])  # (n_rows, ow, 3)
+        bot = np.ascontiguousarray(small[1::2])
+        n_rows = top.shape[0]
         pad = max(0, (cols - ow) // 2)
-        pad_str = " " * pad
 
-        buf = [CURSOR_HOME]
-        for r in range(0, oh, 2):
-            top_row = small[r]
-            bot_row = small[r + 1] if r + 1 < oh else np.zeros((ow, 3), dtype=np.uint8)
-            parts = [pad_str]
-            for c in range(ow):
-                tr, tg, tb = int(top_row[c, 0]), int(top_row[c, 1]), int(top_row[c, 2])
-                br, bg, bb = int(bot_row[c, 0]), int(bot_row[c, 1]), int(bot_row[c, 2])
-                parts.append(f"\033[38;2;{tr};{tg};{tb};48;2;{br};{bg};{bb}m▀")
-            parts.append(RESET)
-            buf.append("".join(parts))
+        nbytes = _lib.render_halfblock(
+            top.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+            bot.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+            n_rows, ow, pad,
+            self._buf,
+        )
+        image = self._buf.raw[:nbytes].decode("utf-8")
 
-        rendered_lines = oh // 2
+        # Blank leftover rows
         avail_lines = rows - 2
-        for _ in range(avail_lines - rendered_lines):
-            buf.append(" " * cols)
+        blank_count = avail_lines - n_rows
+        blanks = (" " * cols + "\n") * blank_count if blank_count > 0 else ""
 
         # Status bar
         cmap = self.colormap.upper()
         status = f" LIVE {self.width}x{self.height} | {self._fps:.0f} fps | {cmap}"
-        buf.append(f"{REVERSE}{status[:cols].ljust(cols)}{RESET}")
 
-        return "\n".join(buf)
+        return image + blanks + f"{REVERSE}{status[:cols].ljust(cols)}{RESET}"
 
     def draw(self, frame):
+        """
+        Render a depth frame to the terminal.
+
+        Args:
+            frame: 2D numpy array (height x width) of depth values.
+                   Zero means invalid/no-data.
+        """
         self._frame_count += 1
         now = time.monotonic()
         elapsed = now - self._fps_t0
