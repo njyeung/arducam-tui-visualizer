@@ -182,8 +182,6 @@ class LiveViewer:
             frame: 2D numpy array (height x width) of depth values.
                    Zero means invalid/no-data.
         """
-        if not self.enabled:
-            return
         self._frame_count += 1
         now = time.monotonic()
         elapsed = now - self._fps_t0
@@ -192,5 +190,11 @@ class LiveViewer:
             self._frame_count = 0
             self._fps_t0 = now
 
-        sys.stdout.write(self._render_frame(frame))
+        if self.enabled:
+            sys.stdout.write(self._render_frame(frame))
+        else:
+            cols, _ = os.get_terminal_size()
+            cmap = self.colormap.upper()
+            status = f" LIVE {self.width}x{self.height} | {self._fps:.0f} fps | {cmap}"
+            sys.stdout.write(CURSOR_HOME + f"{REVERSE}{status[:cols].ljust(cols)}{RESET}")
         sys.stdout.flush()
