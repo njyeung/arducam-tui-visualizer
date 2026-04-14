@@ -70,11 +70,12 @@ GRAY_LUT = _build_gray_lut()
 
 class LiveViewer:
 
-    def __init__(self, width, height, max_depth=4096):
+    def __init__(self, width, height, max_depth=4096, enabled=True):
         self.width = width
         self.height = height
         self.max_depth = max_depth
         self.colormap = "heat"
+        self.enabled = enabled
 
         self._frame_count = 0
         self._fps = 0.0
@@ -181,6 +182,8 @@ class LiveViewer:
             frame: 2D numpy array (height x width) of depth values.
                    Zero means invalid/no-data.
         """
+        if not self.enabled:
+            return
         self._frame_count += 1
         now = time.monotonic()
         elapsed = now - self._fps_t0
