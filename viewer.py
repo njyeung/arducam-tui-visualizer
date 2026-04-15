@@ -142,13 +142,29 @@ class LiveViewer:
         rgb[~valid] = bg
         return rgb
 
-    def _render_frame(self, frame):
+    def _stamp_markers(self, small, points, color, out_w, out_h):
+        """Draw cross markers on the downsampled image at given pixel positions."""
+        for cx, cy in points:
+            px = int(cx / self.width * out_w)
+            py = int(cy / self.height * out_h)
+            for dy in range(-2, 3):
+                for dx in range(-2, 3):
+                    if abs(dy) + abs(dx) <= 2:
+                        ny, nx = py + dy, px + dx
+                        if 0 <= ny < out_h and 0 <= nx < out_w:
+                            small[ny, nx] = color
+
+    def _render_frame(self, frame, points=None):
         cols, rows = os.get_terminal_size()
         self._update_downsample_indices(cols, rows)
         ow = self._out_w
+        oh = self._out_h
 
         rgb = self._depth_to_rgb(frame)
         small = rgb[np.ix_(self._y_idx, self._x_idx)]
+
+        if points:
+            self._stamp_markers(small, points, [255, 105, 180], ow, oh)
 
         top = np.ascontiguousarray(small[0::2])  # (n_rows, ow, 3)
         bot = np.ascontiguousarray(small[1::2])
@@ -171,16 +187,20 @@ class LiveViewer:
         # Status bar
         cmap = self.colormap.upper()
         status = f" LIVE {self.width}x{self.height} | {self._fps:.0f} fps | {cmap}"
+        if points:
+            status += f" | {len(points)} det"
 
         return image + blanks + f"{REVERSE}{status[:cols].ljust(cols)}{RESET}"
 
-    def draw(self, frame):
+    def draw(self, frame, points=None):
         """
         Render a depth frame to the terminal.
 
         Args:
             frame: 2D numpy array (height x width) of depth values.
                    Zero means invalid/no-data.
+            points: optional list of (x, y) tuples in pixel coordinates
+                    to draw as pink markers on the frame.
         """
         self._frame_count += 1
         now = time.monotonic()
@@ -191,7 +211,7 @@ class LiveViewer:
             self._fps_t0 = now
 
         if self.enabled:
-            sys.stdout.write(self._render_frame(frame))
+            sys.stdout.write(self._render_frame(frame, points=points))
         else:
             cols, _ = os.get_terminal_size()
             cmap = self.colormap.upper()
